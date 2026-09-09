@@ -38,6 +38,8 @@ jobs:
           - codename: marlin
             build_id: "QP1A.191005.007.A1"
           - codename: sailfish
+            build_id: "QP1A.191005.007.A3"
+          - codename: sailfish
             build_id: "QP1A.191005.007.A1"
     steps:
       - name: Checkout

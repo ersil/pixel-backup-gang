@@ -62,6 +62,13 @@ let
   # Captured from a sailfish running A1: same kernel revision and configuration
   # as marlin A1, but use the sailfish factory image for its boot header/ramdisk.
   sailfishBuildRegistry = {
+    "QP1A.191005.007.A3" = {
+      kernelSrcRev = "72a7a64494e033f2213c9701dbf137d277bf2026";
+      kernelSrcSha256 = "sha256-CdM0PkUGkm1SVAT/J2QywX15cN/J5nWMqrrI9E6CxnM=";
+      factoryImageUrl = "https://dl.google.com/dl/android/aosp/sailfish-qp1a.191005.007.a3-factory-d4552659.zip";
+      factoryImageSha256 = "d455265945bb936a653730031af7d7a4aba70dc0c775024666a53491c9833b61";
+    };
+
     "QP1A.191005.007.A1" = {
       kernelSrcRev = "72a7a64494e033f2213c9701dbf137d277bf2026";
       kernelSrcSha256 = "sha256-CdM0PkUGkm1SVAT/J2QywX15cN/J5nWMqrrI9E6CxnM=";

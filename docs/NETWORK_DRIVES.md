@@ -48,8 +48,8 @@ to the device.
 * an NFS server with an export reachable from the pixel over the network
 
 ## acquiring the custom boot image
-builds are supported for marlin on versions `QP1A.191005.007.A3` and
-`QP1A.191005.007.A1`, and sailfish on `QP1A.191005.007.A1`.
+builds are supported for marlin and sailfish on versions `QP1A.191005.007.A3`
+and `QP1A.191005.007.A1`.
 
 check which version you are running with `adb shell getprop ro.build.id`, or in Settings -> About phone -> Build number.
 
