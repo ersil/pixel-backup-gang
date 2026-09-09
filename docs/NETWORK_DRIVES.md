@@ -48,7 +48,8 @@ to the device.
 * an NFS server with an export reachable from the pixel over the network
 
 ## acquiring the custom boot image
-builds are currently supported for marlin on versions `QP1A.191005.007.A3` and `QP1A.191005.007.A1` - sailfish support coming soon.
+builds are supported for marlin on versions `QP1A.191005.007.A3` and
+`QP1A.191005.007.A1`, and sailfish on `QP1A.191005.007.A1`.
 
 check which version you are running with `adb shell getprop ro.build.id`, or in Settings -> About phone -> Build number.
 
@@ -57,11 +58,27 @@ check which version you are running with `adb shell getprop ro.build.id`, or in 
 
 ### building it yourself with nix
 1. check your device's build number (Settings → About phone → Build number)
-1. build it, substituting your device codename (`marlin`, currently the only
-   one supported) and build number for `<BUILD_ID>`:
-   `nix build 'github:master-hax/pixel-backup-gang#marlin."<BUILD_ID>".magiskBootImages.specialNfs'`
+1. build it on Linux, substituting your device codename (`marlin` or
+   `sailfish`) and build number for `<BUILD_ID>`:
+   `nix build 'github:master-hax/pixel-backup-gang#<CODENAME>."<BUILD_ID>".magiskBootImages.specialNfs'`
    * e.g. `nix build 'github:master-hax/pixel-backup-gang#marlin."QP1A.191005.007.A3".magiskBootImages.specialNfs'`
+   * for sailfish: `nix build 'github:master-hax/pixel-backup-gang#sailfish."QP1A.191005.007.A1".magiskBootImages.specialNfs'`
    * this produces `result/boot.img`
+
+#### ARM64 build hosts
+
+Both `x86_64-linux` and `aarch64-linux` build hosts are supported. ARM64 hosts
+run Nix and host tools natively, but need x86_64 binfmt emulation for the pinned
+AOSP GCC 4.9 prebuilts. Those prebuilts retain their x86_64 runtime libraries.
+
+On an ARM64 NixOS host, enable:
+
+```nix
+boot.binfmt.emulatedSystems = [ "x86_64-linux" ];
+```
+
+On other ARM64 Linux hosts, register an x86_64 QEMU binfmt handler and add
+`extra-platforms = x86_64-linux` to the Nix configuration.
 
 ### downloading a prebuilt boot.img from github
 download the boot image corresponding to your device & build number from the [latest release](https://github.com/master-hax/pixel-backup-gang/releases)

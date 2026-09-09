@@ -5,6 +5,12 @@ let
   mountingScriptsVersion = "snapshot";
   mountingScriptsBuildPackages = with pkgs; [ gnumake gnutar shellcheck ];
 
+  # AOSP's pinned GCC 4.9 prebuilts run on x86_64 Linux. Keep their patching
+  # environment and runtime libraries x86_64 even on an aarch64 build host.
+  # ARM hosts need x86_64 binfmt emulation; the other build tools stay native.
+  toolchainPkgs = if pkgs.stdenv.hostPlatform.isx86_64 then pkgs else
+    import pkgs.path { system = "x86_64-linux"; };
+
   mountingScripts = pkgs.stdenv.mkDerivation {
     pname = "pixel-backup-gang";
     version = mountingScriptsVersion;
@@ -23,9 +29,8 @@ let
     '';
   };
 
-  # supported marlin OS builds, keyed by build id (ro.build.id). add an entry
-  # here for another device/OS version - mkMarlinBuild below generates
-  # everything else (kernel, factory extraction, repacked boot images) from it
+  # supported marlin OS builds, keyed by build id (ro.build.id). Device-specific
+  # registries feed the shared mkPixelBuild builder below.
   marlinBuildRegistry = {
     "QP1A.191005.007.A3" = {
       # git-describe hash from this build's own version string ("3.18.137-g72a7a64494e")
@@ -54,17 +59,28 @@ let
     };
   };
 
+  # Captured from a sailfish running A1: same kernel revision and configuration
+  # as marlin A1, but use the sailfish factory image for its boot header/ramdisk.
+  sailfishBuildRegistry = {
+    "QP1A.191005.007.A1" = {
+      kernelSrcRev = "72a7a64494e033f2213c9701dbf137d277bf2026";
+      kernelSrcSha256 = "sha256-CdM0PkUGkm1SVAT/J2QywX15cN/J5nWMqrrI9E6CxnM=";
+      factoryImageUrl = "https://dl.google.com/dl/android/aosp/sailfish-qp1a.191005.007.a1-factory-78c6703e.zip";
+      factoryImageSha256 = "78c6703ea4473ed65c51d6e258bb67368962bd13aad3975db08b42c7b8d49cb0";
+    };
+  };
+
   ##############################################################################
   # mk* builder functions
   ##############################################################################
 
   # patches a prebuilt AOSP toolchain's glibc/interpreter paths for the Nix sandbox
   mkPatchedToolchain = { pname, rev, url }:
-    pkgs.stdenv.mkDerivation {
+    toolchainPkgs.stdenv.mkDerivation {
       inherit pname;
       version = builtins.substring 0 7 rev;
 
-      src = pkgs.fetchgit {
+      src = toolchainPkgs.fetchgit {
         inherit url rev;
         sha256 =
           if rev == "d7d824eaa0690179c4b504209dbb017dfc730cf3"
@@ -72,8 +88,8 @@ let
           else "sha256-9/3dQvATMshK3snKRbWgJBt3t8H2uJXYQf1vVU6yA8Y=";
       };
 
-      nativeBuildInputs = [ pkgs.autoPatchelfHook ];
-      buildInputs = [ pkgs.glibc pkgs.zlib ];
+      nativeBuildInputs = [ toolchainPkgs.autoPatchelfHook ];
+      buildInputs = [ toolchainPkgs.glibc toolchainPkgs.zlib ];
 
       installPhase = ''
         mkdir -p $out
@@ -167,6 +183,9 @@ let
       installPhase = ''
         mkdir -p $out
         cp "$OUT_DIR"/arch/arm64/boot/Image.lz4-dtb $out/
+        # Validate the configuration embedded in the compiled kernel, not
+        # just the input configuration (olddefconfig can change settings).
+        bash scripts/extract-ikconfig "$OUT_DIR"/arch/arm64/boot/Image > $out/config
       '';
     };
 
@@ -405,7 +424,7 @@ EOF
     };
   };
 
-  # the version marlin.*.magiskBootImages is pinned to - bump this (and
+  # the version each device's magiskBootImages is pinned to - bump this (and
   # add a new magiskRegistry entry) to move everyone forward at once
   #
   # NOT 30.7: known bug produces an oversized boot.img ("size too large" from
@@ -507,9 +526,9 @@ EOF
     rev = "0f5ac4a0fb21cff9cdd55c858380f426f8e5fd1b";
   };
 
-  # builds every output (kernel, factory image extraction, repacked boot images)
-  # for one marlinBuildRegistry entry
-  mkMarlinBuild = buildId: { kernelSrcRev, kernelSrcSha256, factoryImageUrl, factoryImageSha256 }:
+  # builds every output for one device/OS entry. Keep factory boot images
+  # device-specific even when the kernel source and configuration match.
+  mkPixelBuild = { deviceCodename, defconfigFile }: buildId: { kernelSrcRev, kernelSrcSha256, factoryImageUrl, factoryImageSha256 }:
     let
       kernelSrc = pkgs.fetchgit {
         url = "https://android.googlesource.com/kernel/msm";
@@ -525,16 +544,16 @@ EOF
       factoryBootImg = mkPixelFactoryBootImg { inherit factoryImage; };
 
       stockKernel = mkPixelKernel {
-        deviceCodename = "marlin-${buildId}";
+        deviceCodename = "${deviceCodename}-${buildId}";
         inherit kernelSrc;
-        defconfigFile = ./kernel/marlin_72a7a64494e_defconfig;
+        inherit defconfigFile;
       };
 
       # same source/config as stockKernel, but with NFS client support enabled
       specialNfsKernel = mkPixelKernel {
-        deviceCodename = "marlin-${buildId}-specialnfs";
+        deviceCodename = "${deviceCodename}-${buildId}-specialnfs";
         inherit kernelSrc;
-        defconfigFile = ./kernel/marlin_72a7a64494e_defconfig;
+        inherit defconfigFile;
         extraConfig = [
           # NFS_FS is gated behind NETWORK_FILESYSTEMS, which our base config
           # disables - enable it first or olddefconfig silently drops NFS_FS again
@@ -545,13 +564,13 @@ EOF
         ];
       };
       stockBootImg = mkPixelRepackBootImg {
-        name = "marlin-${buildId}-stock-nonrooted-bootimg";
+        name = "${deviceCodename}-${buildId}-stock-nonrooted-bootimg";
         kernelPkg = stockKernel;
         bootImg = "${factoryBootImg}/boot.img";
       };
 
       specialNfsBootImg = mkPixelRepackBootImg {
-        name = "marlin-${buildId}-specialnfs-nonrooted-bootimg";
+        name = "${deviceCodename}-${buildId}-specialnfs-nonrooted-bootimg";
         kernelPkg = specialNfsKernel;
         bootImg = "${factoryBootImg}/boot.img";
       };
@@ -560,19 +579,19 @@ EOF
       # the factory boot.img itself
       factoryKernel = mkPixelExtractedKernel {
         bootImg = "${factoryBootImg}/boot.img";
-        pname = "marlin-${buildId}-factory-kernel";
+        pname = "${deviceCodename}-${buildId}-factory-kernel";
       };
 
       # repacking factoryBootImg's own extracted kernel back into a boot.img
       # should reproduce factoryBootImg exactly - see the
       # factoryKernelRoundtrip check below, which asserts this
       factoryBootImgRoundtrip = mkPixelRepackBootImg {
-        name = "marlin-${buildId}-factory-roundtrip-bootimg";
+        name = "${deviceCodename}-${buildId}-factory-roundtrip-bootimg";
         kernelPkg = factoryKernel;
         bootImg = "${factoryBootImg}/boot.img";
       };
     in
-    {
+    rec {
       inherit kernelSrc factoryImage;
 
       # kernel builds, keyed the same way as bootImages/magiskBootImages below
@@ -585,6 +604,22 @@ EOF
       # sanity checks, not build outputs - build one to verify, e.g.
       # `nix-build -A marlin."<id>".checks.factoryKernelRoundtrip`
       checks = {
+        nfsKernelConfig = pkgs.runCommand "${deviceCodename}-${buildId}-nfs-config-test" {} ''
+          for option in NETWORK_FILESYSTEMS NFS_FS NFS_V3 NFS_V4 SUNRPC SDCARD_FS; do
+            grep -qx "CONFIG_$option=y" ${specialNfsKernel}/config
+          done
+          touch $out
+        '';
+
+        # Pixel/Pixel XL boot partitions are 32 MiB.
+        bootImageSizes = pkgs.runCommand "${deviceCodename}-${buildId}-boot-image-size-test" {} ''
+          for image in ${specialNfsBootImg}/boot.img ${magiskBootImages.specialNfs}/boot.img; do
+            test -s "$image"
+            test "$(stat -c%s "$image")" -le 33554432
+          done
+          touch $out
+        '';
+
         # extract + repack the factory kernel and diff it against the
         # original, proving mkPixelExtractedKernel/mkPixelRepackBootImg
         # round-trip cleanly. two dead/inert byte ranges are excluded:
@@ -596,7 +631,7 @@ EOF
         # - everything past our repacked image's length: the original has a
         #   trailing Google-signed boot signature (private-key signed
         #   ASN.1/PKCS#7 blob) we have no way to reproduce
-        factoryKernelRoundtrip = pkgs.runCommand "marlin-${buildId}-factory-kernel-roundtrip-test" {} ''
+        factoryKernelRoundtrip = pkgs.runCommand "${deviceCodename}-${buildId}-factory-kernel-roundtrip-test" {} ''
           our_size=$(stat -c%s ${factoryBootImgRoundtrip}/boot.img)
 
           cp ${factoryBootImgRoundtrip}/boot.img ours.img
@@ -622,7 +657,7 @@ EOF
       # mkMagiskPatchedBootImg directly for a different Magisk version
       magiskBootImages = {
         factory = mkMagiskPatchedBootImg {
-          name = "marlin-${buildId}-factory-magisk${magiskLatestVersion}-bootimg";
+          name = "${deviceCodename}-${buildId}-factory-magisk${magiskLatestVersion}-bootimg";
           bootImg = "${factoryBootImg}/boot.img";
           magiskApk = magiskRegistry.${magiskLatestVersion};
           magiskVersion = magiskLatestVersion;
@@ -634,7 +669,7 @@ EOF
         };
 
         stock = mkMagiskPatchedBootImg {
-          name = "marlin-${buildId}-stock-magisk${magiskLatestVersion}-bootimg";
+          name = "${deviceCodename}-${buildId}-stock-magisk${magiskLatestVersion}-bootimg";
           bootImg = "${stockBootImg}/boot.img";
           magiskApk = magiskRegistry.${magiskLatestVersion};
           magiskVersion = magiskLatestVersion;
@@ -643,7 +678,7 @@ EOF
         };
 
         specialNfs = mkMagiskPatchedBootImg {
-          name = "marlin-${buildId}-specialnfs-magisk${magiskLatestVersion}-bootimg";
+          name = "${deviceCodename}-${buildId}-specialnfs-magisk${magiskLatestVersion}-bootimg";
           bootImg = "${specialNfsBootImg}/boot.img";
           magiskApk = magiskRegistry.${magiskLatestVersion};
           magiskVersion = magiskLatestVersion;
@@ -653,11 +688,23 @@ EOF
       };
     };
 
+  # Preserve the existing mkMarlinBuild interface for downstream callers.
+  mkMarlinBuild = mkPixelBuild {
+    deviceCodename = "marlin";
+    defconfigFile = ./kernel/marlin_72a7a64494e_defconfig;
+  };
+
+  mkSailfishBuild = mkPixelBuild {
+    deviceCodename = "sailfish";
+    defconfigFile = ./kernel/sailfish_72a7a64494e_defconfig;
+  };
+
   marlin = pkgs.lib.mapAttrs mkMarlinBuild marlinBuildRegistry;
+  sailfish = pkgs.lib.mapAttrs mkSailfishBuild sailfishBuildRegistry;
 
 in
 
 {
-  inherit mountingScripts marlin magiskRegistry;
-  inherit mkPixelKernel mkPixelFactoryBootImg mkPixelRepackBootImg mkMarlinBuild mkMagiskPatchedBootImg mkNfsAutoMountMagiskModule;
+  inherit mountingScripts marlin sailfish magiskRegistry;
+  inherit mkPixelKernel mkPixelFactoryBootImg mkPixelRepackBootImg mkMarlinBuild mkSailfishBuild mkPixelBuild mkMagiskPatchedBootImg mkNfsAutoMountMagiskModule;
 }
